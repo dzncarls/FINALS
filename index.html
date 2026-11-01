@@ -1,0 +1,509 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f7f8f3" />
+    <title>IS78 Pricing DSS</title>
+    <link rel="stylesheet" href="./src/styles.css" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script>
+      const months = ['Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep'];
+      const crops = ['All crops', 'Talong', 'Patani'];
+      const districts = ['All communities', 'Porac', 'Angeles', 'San Fernando', 'Guagua'];
+      const cropBasePrice = { Talong: 50, Patani: 69 };
+      const cropTrend = Object.fromEntries(crops.slice(1).map((crop) => [crop, months.map((_, index) => Math.round(cropBasePrice[crop] * (0.9 + index / 70)))]));
+      const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      const weatherForecast = [
+        { day: 'Today', icon: '☀', temp: '31°', note: 'Warm and clear' },
+        { day: 'Wed', icon: '☁', temp: '30°', note: 'Cloudy intervals' },
+        { day: 'Thu', icon: '☂', temp: '29°', note: 'Scattered rain' },
+        { day: 'Fri', icon: '☂', temp: '30°', note: 'Afternoon showers' },
+        { day: 'Sat', icon: '☀', temp: '32°', note: 'Mostly sunny' },
+      ];
+      const cropEconomicsSamples = [
+        { crop: 'Talong', productionCost: 18000, currentPrice: 47, averageSellingPriceRange: '₱42–₱49 / kg' },
+        { crop: 'Patani', productionCost: 22500, currentPrice: 66, averageSellingPriceRange: '₱61–₱70 / kg' },
+      ];
+      const state = { tab: window.location.hash.replace('#', '') || 'overview', crop: 'All crops', district: 'All communities', period: 'Last 8 months', priceSlide: 0, communitySlide: 0, showAllTransactions: false, markets: [
+        { id: 1, name: 'Porac Public Market', community: 'Porac', crops: ['Talong', 'Patani'], contact: 'Porac, Pampanga', active: true },
+        { id: 2, name: 'Angeles Public Market', community: 'Angeles', crops: ['Talong', 'Patani'], contact: 'Angeles City, Pampanga', active: true },
+        { id: 3, name: 'Bagong Palengke ng San Fernando', community: 'San Fernando', crops: ['Talong', 'Patani'], contact: 'San Fernando, Pampanga', active: true },
+        { id: 4, name: 'Guagua Public Market', community: 'Guagua', crops: ['Talong', 'Patani'], contact: 'Guagua, Pampanga', active: true },
+      ], prices: [
+        { marketId: 1, crop: 'Talong', price: 47, change: -1.2, volume: '310 kg' }, { marketId: 1, crop: 'Patani', price: 66, change: 1.8, volume: '140 kg' },
+        { marketId: 2, crop: 'Talong', price: 52, change: 2.3, volume: '270 kg' }, { marketId: 2, crop: 'Patani', price: 71, change: 2.6, volume: '160 kg' },
+        { marketId: 3, crop: 'Talong', price: 50, change: 1.6, volume: '290 kg' }, { marketId: 3, crop: 'Patani', price: 68, change: 1.4, volume: '130 kg' },
+        { marketId: 4, crop: 'Talong', price: 54, change: 3.1, volume: '240 kg' }, { marketId: 4, crop: 'Patani', price: 73, change: 2.9, volume: '120 kg' },
+      ], transactions: [
+        { date: '18 Sep 2026', crop: 'Talong', marketId: 1, quantity: '75 kg', price: 47, status: 'Recorded' }, { date: '17 Sep 2026', crop: 'Patani', marketId: 2, quantity: '120 kg', price: 71, status: 'Settled' }, { date: '16 Sep 2026', crop: 'Talong', marketId: 3, quantity: '90 kg', price: 50, status: 'Settled' }, { date: '15 Sep 2026', crop: 'Patani', marketId: 4, quantity: '110 kg', price: 73, status: 'Settled' },
+      ], toast: '' };
+      document.body.classList.toggle('mobile-entry', new URLSearchParams(window.location.search).has('mobile'));
+      const root = document.getElementById('root');
+      const peso = (value) => `₱${Number(value || 0).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      const esc = (value) => String(value).replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[char]));
+      const marketById = (id) => state.markets.find((market) => market.id === Number(id));
+      const activeMarkets = () => state.markets.filter((market) => market.active);
+      const priceRows = () => state.prices.filter((row) => { const market = marketById(row.marketId); return market && market.active && (state.crop === 'All crops' || row.crop === state.crop) && (state.district === 'All communities' || market.community === state.district); });
+      const averagePrice = (crop) => { const rows = state.prices.filter((row) => row.crop === crop && marketById(row.marketId)?.active); return rows.length ? rows.reduce((sum, row) => sum + row.price, 0) / rows.length : 0; };
+      function notify(message) { state.toast = message; render(); window.setTimeout(() => { state.toast = ''; render(); }, 2600); }
+      function go(tab) { window.location.hash = tab; }
+      function nav() { return [['overview', 'Overview', '⌂'], ['outlook', 'Market Outlook', '↗'], ['markets', 'Market Records', '▦'], ['profile', 'Profile / Admin', '○']]; }
+      function trendSlideCrop() { const options = crops.slice(1); return state.crop === 'All crops' ? options[((state.priceSlide % options.length) + options.length) % options.length] : state.crop; }
+      function trendSeries(crop) { const base = cropTrend[crop]; if (state.period === 'Last 8 months') return { labels: months, values: base }; if (state.period === 'Last 12 months') { const step = base[1] - base[0]; return { labels: ['Oct', 'Nov', 'Dec', 'Jan', ...months], values: [base[0] - step * 4, base[0] - step * 3, base[0] - step * 2, base[0] - step, ...base] }; } return { labels: ['Jan', ...months], values: [base[0] - (base[1] - base[0]), ...base] }; }
+      function chartMarkup() { const selected = state.crop === 'All crops' ? crops.slice(1) : [state.crop]; const values = months.map((_, index) => Math.round(selected.reduce((sum, crop) => sum + cropTrend[crop][index], 0) / selected.length)); return lineChartMarkup(months, values); }
+      let overviewVolumeSlide = 0;
+      let overviewPriceSlide = 0;
+      let overviewTrendSlide = 0;
+      let overviewTrendPeriod = 'monthly';
+      const overviewTrendCrops = [...crops.slice(1), 'All crops'];
+      function cropVolume(crop) { return state.prices.filter((row) => row.crop === crop).reduce((sum, row) => sum + Number(row.volume.replace(/[^0-9.]/g, '')), 0); }
+      function overviewTrendSeries(crop) {
+        const monthlyValues = crop === 'All crops' ? months.map((_, index) => Math.round(crops.slice(1).reduce((sum, item) => sum + cropTrend[item][index], 0) / (crops.length - 1))) : cropTrend[crop];
+        if (overviewTrendPeriod === 'monthly') return { labels: months, values: monthlyValues, note: 'Representative monthly sample prices.' };
+        const count = overviewTrendPeriod === 'weekly' ? 8 : 7;
+        const labels = overviewTrendPeriod === 'daily' ? weekdays : Array.from({ length: count }, (_, index) => `Week ${index + 1}`);
+        const previous = monthlyValues[monthlyValues.length - 2];
+        const latest = monthlyValues[monthlyValues.length - 1];
+        const values = Array.from({ length: count }, (_, index) => Math.round(previous + (latest - previous) * (index / (count - 1))));
+        return { labels, values, note: `${overviewTrendPeriod === 'weekly' ? 'Weekly' : 'Daily'} sample estimated from the locally stored monthly values.` };
+      }
+      function overviewTrendChart() {
+        const crop = overviewTrendCrops[((overviewTrendSlide % overviewTrendCrops.length) + overviewTrendCrops.length) % overviewTrendCrops.length];
+        const series = overviewTrendSeries(crop);
+        const periodLabel = `${overviewTrendPeriod[0].toUpperCase()}${overviewTrendPeriod.slice(1)}`;
+        const markup = lineChartMarkup(series.labels, series.values).replace('aria-label="Monthly crop price line chart"', `aria-label="${periodLabel} crop price movement chart"`);
+        return { crop, series, markup };
+      }
+      function lineChartMarkup(labels, values) { const min = Math.min(...values); const max = Math.max(...values); const points = values.map((value, index) => `${(index / (values.length - 1)) * 100},${86 - ((value - min) / (max - min || 1)) * 68}`).join(' '); return `<div class="line-chart"><div class="line-chart-y"><span>${peso(max)}</span><span>${peso(Math.round((max + min) / 2))}</span><span>${peso(min)}</span></div><div class="line-chart-area"><div class="line-chart-grid"><i></i><i></i><i></i></div><svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Monthly crop price line chart"><polyline points="${points}" fill="none" stroke="#317a5b" stroke-width="2" vector-effect="non-scaling-stroke"></polyline>${values.map((value, index) => `<circle cx="${(index / (values.length - 1)) * 100}" cy="${86 - ((value - min) / (max - min || 1)) * 68}" r="1.7" fill="#f7f8f3" stroke="#317a5b" stroke-width="1.1" vector-effect="non-scaling-stroke"></circle>`).join('')}</svg><div class="line-chart-x">${labels.map((month) => `<span>${month}</span>`).join('')}</div></div></div>`; }
+      function priceSlide() { const crop = crops.slice(1)[((state.priceSlide % (crops.length - 1)) + crops.length - 1) % (crops.length - 1)]; return { crop, average: averagePrice(crop), rows: state.prices.filter((row) => row.crop === crop && marketById(row.marketId)?.active) }; }
+      function communitySlide() { const options = crops.slice(1); const crop = state.crop === 'All crops' ? options[((state.communitySlide % options.length) + options.length) % options.length] : state.crop; const rows = activeMarkets().filter((market) => state.district === 'All communities' || market.community === state.district).map((market) => ({ market, row: state.prices.find((price) => price.marketId === market.id && price.crop === crop) })); const values = rows.filter((item) => item.row).map((item) => item.row.price); return { crop, rows, low: values.length ? Math.min(...values) : 0, high: values.length ? Math.max(...values) : 0 }; }
+      function overviewView() {
+        const marketSlide = communitySlide();
+        const active = activeMarkets();
+        const volumeCrop = crops.slice(1)[overviewVolumeSlide % (crops.length - 1)];
+        const priceCrop = crops.slice(1)[overviewPriceSlide % (crops.length - 1)];
+        const volume = cropVolume(volumeCrop);
+        const trend = overviewTrendChart();
+        const trendIndex = ((overviewTrendSlide % overviewTrendCrops.length) + overviewTrendCrops.length) % overviewTrendCrops.length;
+        const priceRowsForCrop = state.prices.filter((row) => row.crop === priceCrop && marketById(row.marketId)?.active);
+        const priceAverage = priceRowsForCrop.length ? priceRowsForCrop.reduce((sum, row) => sum + row.price, 0) / priceRowsForCrop.length : 0;
+        return `<section class="page-heading"><div><p class="eyebrow">Porac, Pampanga | 22 September 2026</p><h1>Good morning, Administrator.</h1><p class="subheading">A practical view of crop prices and farm transactions in the Porac area.</p></div><button class="export-button" data-action="export"><span>↓</span> Export snapshot</button></section>
+          <section class="overview-grid">
+            <article class="kpi-card alert-card"><div class="card-top"><span>Logged in as</span><span class="trend-pill neutral">Administrator</span></div><strong>DA Porac</strong><small>Porac crop pricing coordinator</small><button class="text-button" data-action="profile">Manage profile <span>→</span></button></article>
+            <article class="kpi-card accent"><div class="card-top"><span>Total crop volume</span><span class="trend-pill up">All markets</span></div><strong>${volume.toLocaleString()}<span class="unit"> kg</span></strong><small>${esc(volumeCrop)} across registered market listings</small><div class="slide-controls"><b>${overviewVolumeSlide % (crops.length - 1) + 1} / ${crops.length - 1}</b></div></article>
+            <article class="kpi-card"><div class="card-top"><span>Average crop price</span><span class="trend-pill up">All markets</span></div><strong>${peso(priceAverage)}<span class="unit">/ kg</span></strong><small>${esc(priceCrop)} average across ${priceRowsForCrop.length} listings</small><div class="slide-controls"><b>${overviewPriceSlide % (crops.length - 1) + 1} / ${crops.length - 1}</b></div></article>
+            <article class="kpi-card"><div class="card-top"><span>Registered markets</span><span class="trend-pill neutral">Porac</span></div><strong>${active.length}</strong><small>${state.markets.length} total records, including inactive</small><div class="market-dots">${active.map(() => '<i></i>').join('')}</div></article>
+          </section>
+          <section class="dashboard-grid"><article class="panel overview-trend-panel"><div class="panel-header"><div><span class="section-kicker">Porac price pulse</span><h2>${esc(trend.crop === 'All crops' ? 'Average across all crops' : `${trend.crop} price movement`)}</h2></div><span class="comparison-slide-badge">${trendIndex + 1} / ${overviewTrendCrops.length}</span></div>
+            <div class="overview-chart-controls"><div class="period-switch" role="group" aria-label="Price movement period">${[['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']].map(([period, label]) => `<button type="button" data-trend-period="${period}" class="${overviewTrendPeriod === period ? 'active' : ''}" aria-pressed="${overviewTrendPeriod === period}">${label}</button>`).join('')}</div></div>
+            <div class="chart-meta"><strong>${peso(trend.series.values[trend.series.values.length - 1])} / kg</strong><span class="green-text">${esc(trend.crop === 'All crops' ? 'All-crop average' : trend.crop)}</span></div>${trend.markup}<div class="chart-note"><span class="note-badge">i</span> ${esc(trend.series.note)} The line cycles through each crop and the all-crop average.</div></article>
+            <article class="panel comparison-panel"><div class="panel-header"><div><span class="section-kicker">Same-crop comparison</span><h2>${marketSlide.crop} local market status</h2></div><span class="comparison-slide-badge">Auto ${state.communitySlide % (crops.length - 1) + 1} / ${crops.length - 1}</span></div><div class="slide-main"><div><strong>${peso(marketSlide.low)} - ${peso(marketSlide.high)} / kg</strong><p>${marketSlide.rows.filter((item) => item.row).length} of ${marketSlide.rows.length} markets offer ${marketSlide.crop}. Difference between highest and lowest: ${peso(marketSlide.high - marketSlide.low)} / kg.</p></div></div><div class="comparison-list">${marketSlide.rows.map((item) => `<div class="comparison-row ${item.row ? '' : 'unavailable-row'}"><div class="row-label"><strong>${esc(item.market.community)}</strong><span>${item.row ? peso(item.row.price) : 'Not offered'}</span></div><div class="bar-track"><div class="bar-fill ${item.row ? 'highlight' : ''}" style="width:${item.row ? Math.max(14, item.row.price / Math.max(marketSlide.high, 1) * 100) : 0}%"></div></div><small>${item.row ? 'Available' : 'No listing'}</small></div>`).join('')}</div><div class="auto-slide-label">Rotating same-crop market comparison</div></article></section>
+          <section class="panel weather-panel"><div class="panel-header"><div><span class="section-kicker">Local conditions</span><h2>Porac weather forecast</h2></div><span class="weather-source">Representative local forecast</span></div><div class="weather-summary"><div class="weather-now"><span class="weather-symbol">☀</span><div><strong>31°C</strong><small>Porac, Pampanga · Today</small></div></div><p class="weather-note">Warm conditions with a chance of afternoon rain. Check field access and harvest timing before transport.</p></div><div class="forecast-list">${weatherForecast.map((day) => `<div class="forecast-day"><span>${day.day}</span><strong class="forecast-icon">${day.icon}</strong><strong>${day.temp}</strong><small>${day.note}</small></div>`).join('')}</div></section>`;
+      }
+      function marketView() { const rows = priceRows(); const slide = communitySlide(); const trendCrop = trendSlideCrop(); const trend = trendSeries(trendCrop); const visibleTransactions = state.showAllTransactions ? state.transactions : state.transactions.slice(0, 4); const allCrops = crops.slice(1); return `<section class="page-heading"><div><p class="eyebrow">Porac local market network</p><h1>Markets & Trends</h1><p class="subheading">Compare farmer prices, crop availability, and recorded transactions across communities.</p></div><button class="export-button" data-action="export"><span>↓</span> Export market view</button></section><section class="filter-bar"><div class="filter-title"><span class="filter-icon">≡</span> Filter local view</div><label>Crop<select id="crop-select">${crops.map((item) => `<option ${item === state.crop ? 'selected' : ''}>${item}</option>`).join('')}</select></label><label>Community<select id="district-select">${districts.map((item) => `<option ${item === state.district ? 'selected' : ''}>${item}</option>`).join('')}</select></label><label>Period<select id="period-select">${['Last 8 months', 'Last 12 months', 'This year'].map((item) => `<option ${item === state.period ? 'selected' : ''}>${item}</option>`).join('')}</select></label><button class="clear-button" data-action="clear">Clear</button></section><section class="dashboard-grid"><article class="panel trend-panel"><div class="panel-header"><div><span class="section-kicker">Price trend</span><h2>${esc(trendCrop)} movement</h2></div><span class="status-chip">Auto ${state.priceSlide % (crops.length - 1) + 1} / ${crops.length - 1}</span></div>${lineChartMarkup(trend.labels, trend.values)}<div class="auto-slide-label">Rotating crop trend</div></article><article class="panel slide-panel"><div class="panel-header"><div><span class="section-kicker">By community</span><h2>${slide.crop} price difference</h2></div><span class="comparison-slide-badge">Auto ${state.communitySlide % allCrops.length + 1} / ${allCrops.length}</span></div><div class="slide-main"><div><strong>${peso(slide.low)} - ${peso(slide.high)} / kg</strong><p>${slide.rows.filter((item) => item.row).length} of ${slide.rows.length} markets offer ${slide.crop}. Highest difference: ${peso(slide.high - slide.low)} / kg.</p></div></div><div class="comparison-list">${slide.rows.map((item) => `<div class="comparison-row ${item.row ? '' : 'unavailable-row'}"><div class="row-label"><strong>${esc(item.market.community)}</strong><span>${item.row ? peso(item.row.price) : 'Not offered'}</span></div><div class="bar-track"><div class="bar-fill ${item.row ? 'highlight' : ''}" style="width:${item.row ? Math.max(14, item.row.price / Math.max(slide.high, 1) * 100) : 0}%"></div></div><small>${item.row ? 'Available' : 'No listing'}</small></div>`).join('')}</div><div class="auto-slide-label">Rotating price difference</div></article></section><section class="panel market-panel"><div class="panel-header"><div><span class="section-kicker">Current listings</span><h2>Crop prices by local market</h2></div><span class="muted-label">${rows.length} listings</span></div><div class="table-wrap"><table><thead><tr><th>Market</th><th>Crop</th><th>Community</th><th>Price / kg</th><th>Change</th><th>Volume</th><th>Status</th></tr></thead><tbody>${rows.map((row) => { const market = marketById(row.marketId); return `<tr><td><strong>${esc(market.name)}</strong></td><td>${row.crop}</td><td><span class="region-label"><i></i>${esc(market.community)}</span></td><td><strong>${peso(row.price)}</strong></td><td class="${row.change >= 0 ? 'green-text' : 'red-text'}">${row.change >= 0 ? '+' : ''}${row.change}%</td><td>${row.volume}</td><td><span class="status ${row.change < 0 ? 'watch' : 'stable'}"><i></i>${row.change < 0 ? 'Review' : 'Recorded'}</span></td></tr>`; }).join('')}</tbody></table>${!rows.length ? '<div class="empty-state">No active local listings match these filters.</div>' : ''}</div></section><section class="panel market-panel"><div class="panel-header"><div><span class="section-kicker">Past transactions</span><h2>Recent farmer records</h2></div><button class="link-button" data-action="toggle-transactions">${state.showAllTransactions ? 'Show fewer' : 'View all'} →</button></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Crop</th><th>Market</th><th>Quantity</th><th>Price / kg</th><th>Status</th></tr></thead><tbody>${visibleTransactions.map((item) => `<tr><td>${item.date}</td><td><strong>${item.crop}</strong></td><td>${esc(marketById(item.marketId)?.name || 'Removed market')}</td><td>${item.quantity}</td><td>${peso(item.price)}</td><td><span class="status stable"><i></i>${item.status}</span></td></tr>`).join('')}</tbody></table></div></section><section class="panel market-panel"><div class="comparison-header"><div><span class="section-kicker">Overall comparison</span><h2>Crop availability by market</h2></div><span class="muted-label">Same crops, different local supply</span></div><div class="table-wrap crop-comparison-table"><table><thead><tr><th>Crop</th>${activeMarkets().map((market) => `<th>${esc(market.community)}</th>`).join('')}</tr></thead><tbody>${allCrops.map((crop) => `<tr><td><strong>${crop}</strong><small>Price per kilo</small></td>${activeMarkets().map((market) => { const row = state.prices.find((item) => item.marketId === market.id && item.crop === crop); return row ? `<td><strong>${peso(row.price)}</strong></td>` : '<td class="unavailable">Not offered</td>'; }).join('')}</tr>`).join('')}</tbody></table></div></section>`; }
+        function legacyMarketView() { const rows = priceRows(); const slide = communitySlide(); const visibleTransactions = state.showAllTransactions ? state.transactions : state.transactions.slice(0, 4); const allCrops = crops.slice(1); return `<section class="page-heading"><div><p class="eyebrow">Porac local market network</p><h1>Markets & Trends</h1><p class="subheading">Compare farmer prices, crop availability, and recorded transactions across communities.</p></div><button class="export-button" data-action="export"><span>↓</span> Export market view</button></section><section class="filter-bar"><div class="filter-title"><span class="filter-icon">≡</span> Filter local view</div><label>Crop<select id="crop-select">${crops.map((item) => `<option ${item === state.crop ? 'selected' : ''}>${item}</option>`).join('')}</select></label><label>Community<select id="district-select">${districts.map((item) => `<option ${item === state.district ? 'selected' : ''}>${item}</option>`).join('')}</select></label><label>Period<select id="period-select"><option>Last 8 months</option><option>Last 12 months</option><option>This year</option></select></label><button class="clear-button" data-action="clear">Clear</button></section><section class="dashboard-grid"><article class="panel trend-panel"><div class="panel-header"><div><span class="section-kicker">Price trend</span><h2>${esc(state.crop)} movement</h2></div><span class="status-chip">₱ / kg</span></div>${chartMarkup()}<div class="chart-note"><span class="note-badge">i</span> Representative monthly farmgate averages for the Porac prototype.</div></article><article class="panel slide-panel"><div class="panel-header"><div><span class="section-kicker">By community</span><h2>${slide.crop} price difference</h2></div><span class="comparison-slide-badge">${state.communitySlide % allCrops.length + 1} / ${allCrops.length}</span></div><div class="slide-main"><button class="slide-arrow" data-action="community-prev">←</button><div><strong>${peso(slide.low)} - ${peso(slide.high)} / kg</strong><p>${slide.rows.filter((item) => item.row).length} of ${slide.rows.length} markets offer ${slide.crop}. Highest difference: ${peso(slide.high - slide.low)} / kg.</p></div><button class="slide-arrow" data-action="community-next">→</button></div><div class="comparison-list">${slide.rows.map((item) => `<div class="comparison-row ${item.row ? '' : 'unavailable-row'}"><div class="row-label"><strong>${esc(item.market.community)}</strong><span>${item.row ? peso(item.row.price) : 'Not offered'}</span></div><div class="bar-track"><div class="bar-fill ${item.row ? 'highlight' : ''}" style="width:${item.row ? Math.max(14, item.row.price / Math.max(slide.high, 1) * 100) : 0}%"></div></div><small>${item.row ? 'Available' : 'No listing'}</small></div>`).join('')}</div></article></section><section class="panel market-panel"><div class="panel-header"><div><span class="section-kicker">Current listings</span><h2>Crop prices by local market</h2></div><span class="muted-label">${rows.length} listings</span></div><div class="table-wrap"><table><thead><tr><th>Market</th><th>Crop</th><th>Community</th><th>Price / kg</th><th>Change</th><th>Volume</th><th>Status</th></tr></thead><tbody>${rows.map((row) => { const market = marketById(row.marketId); return `<tr><td><strong>${esc(market.name)}</strong></td><td>${row.crop}</td><td><span class="region-label"><i></i>${esc(market.community)}</span></td><td><strong>${peso(row.price)}</strong></td><td class="${row.change >= 0 ? 'green-text' : 'red-text'}">${row.change >= 0 ? '+' : ''}${row.change}%</td><td>${row.volume}</td><td><span class="status ${row.change < 0 ? 'watch' : 'stable'}"><i></i>${row.change < 0 ? 'Review' : 'Recorded'}</span></td></tr>`; }).join('')}</tbody></table>${!rows.length ? '<div class="empty-state">No active local listings match these filters.</div>' : ''}</div></section><section class="panel market-panel"><div class="panel-header"><div><span class="section-kicker">Past transactions</span><h2>Recent farmer records</h2></div><button class="link-button" data-action="toggle-transactions">${state.showAllTransactions ? 'Show fewer' : 'View all'} →</button></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Crop</th><th>Market</th><th>Quantity</th><th>Price / kg</th><th>Status</th></tr></thead><tbody>${visibleTransactions.map((item) => `<tr><td>${item.date}</td><td><strong>${item.crop}</strong></td><td>${esc(marketById(item.marketId)?.name || 'Removed market')}</td><td>${item.quantity}</td><td>${peso(item.price)}</td><td><span class="status stable"><i></i>${item.status}</span></td></tr>`).join('')}</tbody></table></div></section><section class="panel market-panel"><div class="comparison-header"><div><span class="section-kicker">Overall comparison</span><h2>Crop availability by market</h2></div><span class="muted-label">Same crops, different local supply</span></div><div class="table-wrap crop-comparison-table"><table><thead><tr><th>Crop</th>${activeMarkets().map((market) => `<th>${esc(market.community)}</th>`).join('')}</tr></thead><tbody>${allCrops.map((crop) => `<tr><td><strong>${crop}</strong><small>Price per kilo</small></td>${activeMarkets().map((market) => { const row = state.prices.find((item) => item.marketId === market.id && item.crop === crop); return row ? `<td><strong>${peso(row.price)}</strong></td>` : '<td class="unavailable">Not offered</td>'; }).join('')}</tr>`).join('')}</tbody></table></div></section>`; }
+      function profileView() { return `<section class="page-heading"><div><p class="eyebrow">Operations control</p><h1>Profile / Admin</h1><p class="subheading">Manage the registered Porac market network and keep the local crop database current.</p></div><span class="status-chip">Administrator access</span></section><section class="panel profile-panel"><div class="profile-overview"><div class="profile-avatar">DA</div><div class="profile-details"><strong>Department of Agriculture Coordinator</strong><span>Porac Crop Pricing DSS administrator</span><small>Overseeing local market records and farmer pricing information</small></div><span class="status-chip">Active</span></div><div class="admin-summary"><span><strong>${activeMarkets().length}</strong> active markets</span><span><strong>${state.markets.length}</strong> registered records</span><span><strong>${new Set(state.prices.map((row) => row.crop)).size}</strong> crop types tracked</span></div><div class="panel-header"><div><span class="section-kicker">Market registry</span><h2>Registered local markets</h2></div><span class="muted-label">Prototype data stored in this browser session</span></div><div class="table-wrap admin-market-table"><table><thead><tr><th>Market</th><th>Community</th><th>Crops offered</th><th>Contact / location</th><th>Status</th><th>Action</th></tr></thead><tbody>${state.markets.map((market) => `<tr><td><strong>${esc(market.name)}</strong></td><td>${esc(market.community)}</td><td>${market.crops.join(', ')}</td><td>${esc(market.contact)}</td><td><button class="status-toggle ${market.active ? 'active' : ''}" data-market-toggle="${market.id}">${market.active ? 'Active' : 'Inactive'}</button></td><td><button class="table-action" data-market-delete="${market.id}">Remove</button></td></tr>`).join('')}</tbody></table></div><div class="market-admin-section"><div class="section-kicker">Add a local market</div><form id="market-form" class="profile-grid"><label>Market name<input name="name" required placeholder="Example: Sapang Uwak Growers" /></label><label>Community<select name="community">${districts.slice(1).map((item) => `<option>${item}</option>`).join('')}</select></label><label>Crops offered<select name="crops" multiple size="4">${crops.slice(1).map((item) => `<option>${item}</option>`).join('')}</select></label><label>Contact / location<input name="contact" required placeholder="Collection point or contact" /></label><div class="profile-actions"><button class="export-button" type="submit">Add market</button><span class="profile-status">New records are available immediately in comparisons.</span></div></form></div></section>`; }
+      function priceOutlookView() { return '<section class="page-heading"><h1>Price Outlook</h1></section>'; }
+      function render() { const previousScrollTop = document.querySelector('.main-content')?.scrollTop || 0; const views = { overview: overviewView, markets: marketView, outlook: priceOutlookView, profile: profileView }; if (!views[state.tab]) state.tab = 'overview'; root.innerHTML = `<div class="app-shell"><aside class="sidebar"><div class="brand"><span class="brand-mark">P</span><span>Porac Pricing DSS</span></div><div class="sidebar-label">Porac decision support</div><nav>${nav().map(([id, label, icon]) => `<a class="nav-item ${state.tab === id ? 'active' : ''}" href="#${id}" aria-label="${label}" title="${label}"><span class="nav-icon">${icon}</span>${label}</a>`).join('')}</nav><div class="sidebar-footer"><div class="avatar">DA</div><div><strong>DA Porac</strong><small>Administrator workspace</small></div><span class="more">...</span></div></aside><main class="main-content"><header class="topbar"><div class="breadcrumb">DSS / <strong>Porac crop pricing</strong></div><div class="top-actions"><span class="live-dot"></span> Local sample data <button class="icon-button" data-action="notify" aria-label="Notifications">!</button><button class="icon-button" data-action="profile" aria-label="Profile">○</button></div></header><div class="filter-context">All sample prices are in Philippine pesos per kilogram and represent local Porac market conditions.</div>${views[state.tab]()}<footer>Local prototype data refreshes when records are updated <span>Porac, Pampanga | Last updated 22 Sep 2026</span></footer></main></div>${state.toast ? `<div class="app-toast visible">${esc(state.toast)}</div>` : ''}`; bind(); const mainContent = document.querySelector('.main-content'); if (mainContent) mainContent.scrollTop = previousScrollTop; }
+      function reorderMarketPanels() { const panels = [...document.querySelectorAll('.market-panel')]; const current = panels.find((panel) => panel.textContent.includes('Current listings')); const past = panels.find((panel) => panel.textContent.includes('Past transactions')); const overall = panels.find((panel) => panel.textContent.includes('Overall comparison')); const economics = panels.find((panel) => panel.classList.contains('economics-panel')); if (current && past && overall) { overall.parentElement.insertBefore(overall, current); current.parentElement.insertBefore(current, economics || past); if (economics) economics.parentElement.insertBefore(economics, past); } }
+      function simplifyCurrentListings() {
+        const filterBar = document.querySelector('.filter-bar');
+        if (filterBar && !document.getElementById('trend-frequency-select')) {
+          filterBar.querySelector('.clear-button')?.insertAdjacentHTML('beforebegin', `<label>Trend interval<select id="trend-frequency-select"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>`);
+        }
+        const frequencySelect = document.getElementById('trend-frequency-select');
+        if (frequencySelect) {
+          frequencySelect.value = marketTrendFrequency;
+          frequencySelect.onchange = () => {
+            marketTrendFrequency = frequencySelect.value;
+            updateMarketTrend();
+          };
+        }
+        const panel = [...document.querySelectorAll('.market-panel')].find((item) => item.textContent.includes('Current listings'));
+        panel?.classList.add('current-listings-panel');
+        const table = panel?.querySelector('table');
+        if (table) {
+          const groups = new Map();
+          [...table.tBodies[0].rows].forEach((row) => {
+            const crop = row.cells[1].textContent.trim();
+            if (!groups.has(crop)) groups.set(crop, []);
+            groups.get(crop).push(row.outerHTML);
+          });
+          const cropOrder = crops.slice(1).filter((crop) => groups.has(crop));
+          table.tBodies[0].innerHTML = cropOrder.map((crop) => groups.get(crop).join('')).join('');
+        }
+        updateMarketTrend();
+        transposeComparisonTable();
+      }
+      function transposeComparisonTable() {
+        const wrapper = document.querySelector('.crop-comparison-table');
+        const table = wrapper?.querySelector('table');
+        if (!table) return;
+        const allCrops = crops.slice(1);
+        const markets = activeMarkets();
+        table.tHead.innerHTML = `<tr><th>Market / community</th>${allCrops.map((crop) => `<th>${esc(crop)}</th>`).join('')}</tr>`;
+        table.tBodies[0].innerHTML = markets.map((market) => `<tr><td><strong>${esc(market.name)}</strong><small>${esc(market.community)}</small></td>${allCrops.map((crop) => {
+          const row = state.prices.find((item) => item.marketId === market.id && item.crop === crop);
+          return row ? `<td><strong>${peso(row.price)}</strong></td>` : '<td class="unavailable">Not offered</td>';
+        }).join('')}</tr>`).join('');
+        const heading = wrapper.closest('.market-panel')?.querySelector('h2');
+        if (heading) heading.textContent = 'Market prices across crops';
+        const caption = wrapper.closest('.market-panel')?.querySelector('.muted-label');
+        if (caption) caption.textContent = 'Compare local prices across active markets';
+      }
+      let marketTrendFrequency = 'monthly';
+      function updateMarketTrend() {
+        const panel = document.querySelector('.trend-panel');
+        const chart = panel?.querySelector('.line-chart');
+        if (!panel || !chart) return;
+        const base = trendSeries(trendSlideCrop());
+        let labels = base.labels;
+        let values = base.values;
+        if (marketTrendFrequency !== 'monthly') {
+          const count = marketTrendFrequency === 'weekly' ? 8 : 7;
+          const previous = values[values.length - 2] ?? values[0];
+          const latest = values[values.length - 1] ?? previous;
+          labels = marketTrendFrequency === 'daily' ? weekdays : Array.from({ length: count }, (_, index) => `Week ${index + 1}`);
+          values = Array.from({ length: count }, (_, index) => Math.round(previous + (latest - previous) * (index / (count - 1))));
+        }
+        const periodLabel = `${marketTrendFrequency[0].toUpperCase()}${marketTrendFrequency.slice(1)}`;
+        chart.outerHTML = lineChartMarkup(labels, values).replace('aria-label="Monthly crop price line chart"', `aria-label="${periodLabel} crop price movement chart"`);
+        let note = panel.querySelector('.market-trend-note');
+        if (!note) {
+          note = document.createElement('div');
+          note.className = 'chart-note market-trend-note';
+          panel.querySelector('.line-chart').after(note);
+        }
+        note.textContent = marketTrendFrequency === 'monthly' ? 'Monthly representative sample prices.' : `${periodLabel} sample estimated from locally stored monthly values.`;
+      }
+      function bind() { reorderMarketPanels(); simplifyCurrentListings(); document.querySelectorAll('[data-action]').forEach((button) => button.addEventListener('click', () => { const action = button.dataset.action; if (action === 'clear') { state.crop = 'All crops'; state.district = 'All communities'; state.period = 'Last 8 months'; render(); } else if (action === 'toggle-transactions') { state.showAllTransactions = !state.showAllTransactions; render(); } else if (action === 'profile' || action === 'markets') go(action === 'profile' ? 'profile' : 'markets'); else if (action === 'notify') notify('No new administrator alerts.'); else if (action === 'export') notify('Snapshot prepared locally. Connect a printer or save this page to export.'); })); document.getElementById('crop-select')?.addEventListener('change', (event) => { state.crop = event.target.value; render(); }); document.getElementById('district-select')?.addEventListener('change', (event) => { state.district = event.target.value; render(); }); document.getElementById('period-select')?.addEventListener('change', (event) => { state.period = event.target.value; render(); }); document.querySelectorAll('[data-market-toggle]').forEach((button) => button.addEventListener('click', () => { const market = marketById(button.dataset.marketToggle); market.active = !market.active; notify(`${market.name} is now ${market.active ? 'active' : 'inactive'}.`); })); document.querySelectorAll('[data-market-delete]').forEach((button) => button.addEventListener('click', () => { const id = Number(button.dataset.marketDelete); const market = marketById(id); state.markets = state.markets.filter((item) => item.id !== id); state.prices = state.prices.filter((item) => item.marketId !== id); notify(`${market.name} was removed from the registry.`); })); document.getElementById('market-form')?.addEventListener('submit', (event) => { event.preventDefault(); const form = new FormData(event.target); const selected = [...event.target.elements.crops.selectedOptions].map((option) => option.value); if (!selected.length) { notify('Select at least one crop for the new market.'); return; } const id = Math.max(0, ...state.markets.map((market) => market.id)) + 1; state.markets.push({ id, name: form.get('name'), community: form.get('community'), crops: selected, contact: form.get('contact'), active: true }); notify(`${form.get('name')} was added to the registry.`); }); }
+      root.addEventListener('click', (event) => {
+        const periodButton = event.target.closest('[data-trend-period]');
+        if (periodButton) {
+          overviewTrendPeriod = periodButton.dataset.trendPeriod;
+          render();
+        }
+      });
+      window.addEventListener('hashchange', () => { state.tab = window.location.hash.replace('#', '') || 'overview'; render(); }); window.setInterval(() => { const filtersActive = state.crop !== 'All crops' || state.district !== 'All communities'; if (state.tab === 'overview') { overviewVolumeSlide += 1; overviewPriceSlide += 1; overviewTrendSlide += 1; state.communitySlide += 1; render(); } else if (state.tab === 'outlook') { let shouldRender = false; if (!filtersActive) { state.priceSlide += 1; state.communitySlide += 1; shouldRender = true; } if (outlookCrop === 'All crops' && !outlookSlidePaused) { const availableCrops = crops.slice(1).filter((crop) => priceOutlookData(crop)); if (availableCrops.length > 1) { outlookSlideIndex = (outlookSlideIndex + 1) % availableCrops.length; shouldRender = true; } } if (shouldRender) render(); } }, 7000); render();
+    </script>
+    <script>
+      if (new URLSearchParams(window.location.search).get('farmer') === '1') {
+        document.title = 'Porac Pricing DSS | Farmer';
+        const root = document.getElementById('root');
+        nav = function () {
+          return [['overview', 'Overview', '⌂'], ['outlook', 'Market Outlook', '↗'], ['markets', 'Market Records', '▦'], ['profile', 'Profile', '○']];
+        };
+        profileView = function () {
+          return `<section class="page-heading"><div><p class="eyebrow">Farmer profile</p><h1>Profile</h1><p class="subheading">Your crops and local decision-support tools.</p></div><span class="status-chip">Farmer account</span></section><section class="panel profile-panel" data-farmer-profile="true"><div class="profile-overview"><div class="profile-avatar">MS</div><div class="profile-details"><strong>Maria Santos</strong><span>Talong and Patani grower</span><small>Guagua, Pampanga</small></div><span class="status-chip">Farmer account</span></div><div class="admin-summary"><span><strong>Talong</strong> main crop</span><span><strong>Patani</strong> secondary crop</span><span><strong>Guagua</strong> local market area</span></div><p class="profile-intro">Check nearby market prices, review crop trends, and explore local price outlooks.</p><div class="profile-tools"><article class="profile-tool"><span class="tool-icon">₱</span><div><strong>Check local prices</strong><small>Compare buying points and recent crop prices.</small></div><a class="link-button" href="#markets">Markets &amp; Trends →</a></article><article class="profile-tool"><span class="tool-icon">↗</span><div><strong>View price outlook</strong><small>See locally calculated price movement signals.</small></div><a class="link-button" href="#outlook">Open Price Outlook →</a></article></div></section>`;
+        };
+        render();
+        root.addEventListener('click', (event) => {
+          if (event.target.closest('[data-market-toggle], [data-market-delete]')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+        root.addEventListener('submit', (event) => {
+          if (event.target.matches('#market-form')) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+        const replacements = new Map([
+          ['Good morning, Administrator.', 'Good morning, Maria.'],
+          ['Administrator access', 'Farmer account'],
+          ['Administrator', 'Farmer'],
+          ['DA Porac', 'Maria Santos'],
+          ['Porac crop pricing coordinator', 'Talong and Patani grower · Guagua'],
+          ['Manage profile', 'Manage my profile'],
+          ['Registered markets', 'Nearby buying points'],
+          ['Profile / Admin', 'Profile'],
+          ['Operations control', 'Farmer profile'],
+          ['Department of Agriculture Coordinator', 'Maria Santos'],
+          ['Porac Crop Pricing DSS administrator', 'Local farmer using Porac Pricing DSS'],
+          ['Overseeing local market records and farmer pricing information', 'Checking local prices and planning harvest sales'],
+          ['No new administrator alerts.', 'No new local price alerts.'],
+          ['Administrator workspace', 'Farmer workspace'],
+          ['Manage the registered Porac market network and keep the local crop database current.', 'Review your farm details and use the Porac DSS to plan a sale.'],
+          ['across registered market listings', 'across local buyer listings'],
+          ['total records, including inactive', 'local buying points listed'],
+        ]);
+
+        function personalizeFarmerView() {
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+          let textNode;
+          while ((textNode = walker.nextNode())) {
+            for (const [original, farmerText] of replacements) {
+              if (textNode.nodeValue.includes(original)) textNode.nodeValue = textNode.nodeValue.replaceAll(original, farmerText);
+            }
+          }
+
+          const profileLink = root.querySelector('a[href="#profile"]');
+          if (profileLink) {
+            profileLink.title = 'Profile';
+            profileLink.setAttribute('aria-label', 'Profile');
+          }
+          root.querySelectorAll('.avatar').forEach((avatar) => { avatar.textContent = 'MS'; });
+          root.querySelector('.sidebar-footer .more')?.remove();
+
+          const profileHeading = root.querySelector('.page-heading h1');
+          const profilePanel = root.querySelector('.profile-panel');
+          if (profileHeading?.textContent === 'Profile' && profilePanel && !profilePanel.dataset.farmerProfile) {
+            profilePanel.dataset.farmerProfile = 'true';
+            profilePanel.innerHTML = `<div class="profile-overview"><div class="profile-avatar">MS</div><div class="profile-details"><strong>Maria Santos</strong><span>Talong and Patani grower</span><small>Guagua, Pampanga</small></div><span class="status-chip">Farmer account</span></div><div class="admin-summary"><span><strong>Talong</strong> main crop</span><span><strong>Patani</strong> secondary crop</span><span><strong>Pampanga</strong> local market area</span></div><p class="profile-intro">Use local market prices and crop trends to review price outlooks. Profile details shown here are sample information for this local DSS.</p><div class="profile-tools"><article class="profile-tool"><span class="tool-icon">₱</span><div><strong>Check local prices</strong><small>Compare buying points and recent crop prices.</small></div><a class="link-button" href="#markets">Markets &amp; Trends →</a></article><article class="profile-tool"><span class="tool-icon">↗</span><div><strong>View price outlook</strong><small>See locally calculated price movement signals.</small></div><a class="link-button" href="#outlook">Open Price Outlook →</a></article></div>`;
+          }
+        }
+
+        const observer = new MutationObserver(() => {
+          observer.disconnect();
+          personalizeFarmerView();
+          observer.observe(root, { characterData: true, childList: true, subtree: true });
+        });
+        personalizeFarmerView();
+        observer.observe(root, { characterData: true, childList: true, subtree: true });
+      }
+    </script>
+    <script>
+      const dashboardRoot = document.getElementById('root');
+      let outlookCrop = 'All crops';
+      let outlookDistrict = 'All communities';
+      let outlookSlideIndex = 0;
+      let outlookSlidePaused = false;
+      if (window.location.hash === '#outlook') state.tab = 'outlook';
+      nav = function () {
+        return [['overview', 'Overview', '⌂'], ['outlook', 'Market Outlook', '↗'], ['markets', 'Market Records', '▦'], ['profile', 'Profile', '○']];
+      };
+      function priceOutlookData(crop) {
+        const scopedMarkets = activeMarkets().filter((market) => outlookDistrict === 'All communities' || market.community === outlookDistrict);
+        const marketIds = new Set(scopedMarkets.map((market) => market.id));
+        const rows = state.prices.filter((row) => row.crop === crop && marketIds.has(row.marketId));
+        if (!rows.length) return null;
+        const history = cropTrend[crop];
+        const firstPrice = history[0];
+        const latestPrice = history[history.length - 1];
+        const historicalChange = firstPrice > 0 ? (Math.pow(latestPrice / firstPrice, 1 / Math.max(history.length - 1, 1)) - 1) * 100 : 0;
+        const recentChange = rows.reduce((sum, row) => sum + row.change, 0) / rows.length;
+        const marketCount = scopedMarkets.length;
+        const availabilityAdjustment = (1 - rows.length / Math.max(marketCount, 1)) * 0.25;
+        const rainyDays = weatherForecast.filter((day) => /rain|shower/i.test(day.note)).length;
+        const weatherAdjustment = (rainyDays / weatherForecast.length) * 0.15;
+        const historyImpact = historicalChange * 0.25;
+        const marketImpact = recentChange * 0.65;
+        const estimatedChange = historyImpact + marketImpact + availabilityAdjustment + weatherAdjustment;
+        const averagePrice = rows.reduce((sum, row) => sum + row.price, 0) / rows.length;
+        const aligned = Math.sign(historicalChange) === Math.sign(recentChange);
+        const signal = rows.length >= 3 && aligned ? 'Strong' : rows.length >= 2 && aligned ? 'Moderate' : 'Limited';
+        const direction = estimatedChange > 0.1 ? 'increase' : estimatedChange < -0.1 ? 'decrease' : 'hold';
+        const historySeries = history.map((price, index) => ({ label: months[index], price }));
+        const influences = [
+          { label: 'Price history · 25%', impact: historyImpact },
+          { label: 'Current market changes · 65%', impact: marketImpact },
+          { label: 'Market availability', impact: availabilityAdjustment },
+          { label: 'Rain outlook', impact: weatherAdjustment },
+        ];
+        return {
+          crop, rows, marketCount, historicalChange, recentChange, historyImpact, marketImpact, availabilityAdjustment, weatherAdjustment, rainyDays,
+          historySeries, influences, estimatedChange, averagePrice,
+          projectedPrice: averagePrice * (1 + estimatedChange / 100), signal, direction,
+        };
+      }
+      function outlookPriceChart(forecast) {
+        const chartValues = [...forecast.historySeries.map((point) => point.price), forecast.averagePrice, forecast.projectedPrice];
+        const minimum = Math.min(...chartValues);
+        const maximum = Math.max(...chartValues);
+        const padding = Math.max((maximum - minimum) * 0.18, maximum * 0.015, 0.1);
+        const low = minimum - padding;
+        const high = maximum + padding;
+        const chartX = (index) => 56 + index * 62;
+        const chartY = (price) => 202 - ((price - low) / (high - low)) * 158;
+        const historyPoints = forecast.historySeries.map((point, index) => `${chartX(index)},${chartY(point.price)}`).join(' ');
+        const currentX = chartX(8);
+        const nextX = chartX(9);
+        const currentY = chartY(forecast.averagePrice);
+        const nextY = chartY(forecast.projectedPrice);
+        const gridValues = [0, 1, 2, 3].map((index) => high - ((high - low) * index) / 3);
+        const labels = [...forecast.historySeries.map((point) => point.label), 'Now', 'Next'];
+        return `<svg class="outlook-price-chart" viewBox="0 0 650 250" role="img" aria-label="Eight-month ${esc(forecast.crop)} price history with estimated next price">
+          <defs><linearGradient id="outlook-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0%" stop-color="#6eac7c" stop-opacity=".25"/><stop offset="100%" stop-color="#6eac7c" stop-opacity=".02"/></linearGradient></defs>
+          ${gridValues.map((value, index) => `<g><line x1="50" y1="${30 + index * 52}" x2="615" y2="${30 + index * 52}" stroke="#e8eee8" stroke-dasharray="4 5"/><text x="44" y="${34 + index * 52}" text-anchor="end" class="chart-axis-label">${peso(value)}</text></g>`).join('')}
+          <polygon points="${historyPoints} ${chartX(7)},202 ${chartX(0)},202" fill="url(#outlook-fill)"/>
+          <polyline points="${historyPoints}" fill="none" stroke="#317a5b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+          ${forecast.historySeries.map((point, index) => `<circle cx="${chartX(index)}" cy="${chartY(point.price)}" r="3.5" fill="#fff" stroke="#317a5b" stroke-width="2"><title>${point.label}: ${peso(point.price)} per kg</title></circle>`).join('')}
+          <line x1="${chartX(7)}" y1="${chartY(forecast.historySeries[7].price)}" x2="${currentX}" y2="${currentY}" stroke="#9eafa2" stroke-width="2" stroke-dasharray="4 5"/>
+          <line x1="${currentX}" y1="${currentY}" x2="${nextX}" y2="${nextY}" stroke="${forecast.direction === 'decrease' ? '#c06459' : forecast.direction === 'increase' ? '#5d9b69' : '#b38b3b'}" stroke-width="3" stroke-dasharray="6 5"/>
+          <circle cx="${currentX}" cy="${currentY}" r="5" fill="#fff" stroke="#536f5d" stroke-width="3"><title>Current local average: ${peso(forecast.averagePrice)} per kg</title></circle>
+          <circle cx="${nextX}" cy="${nextY}" r="6" fill="${forecast.direction === 'decrease' ? '#c06459' : forecast.direction === 'increase' ? '#5d9b69' : '#b38b3b'}" stroke="#fff" stroke-width="2"><title>Estimated next price: ${peso(forecast.projectedPrice)} per kg</title></circle>
+          ${labels.map((label, index) => `<text x="${chartX(index)}" y="229" text-anchor="middle" class="chart-axis-label ${index > 7 ? 'chart-axis-emphasis' : ''}">${label}</text>`).join('')}
+        </svg>`;
+      }
+      function outlookImpactChart(forecast) {
+        const maximumImpact = Math.max(...forecast.influences.map((factor) => Math.abs(factor.impact)), 0.2);
+        return `<div class="outlook-impact-chart">${forecast.influences.map((factor) => {
+          const width = Math.min(45, Math.max(Math.abs(factor.impact) / maximumImpact * 45, factor.impact ? 2 : 0));
+          const value = `${factor.impact > 0 ? '+' : ''}${factor.impact.toFixed(2)} pp`;
+          return `<div class="impact-row"><div class="impact-label"><span>${esc(factor.label)}</span><strong class="${factor.impact < 0 ? 'red-text' : factor.impact > 0 ? 'green-text' : ''}">${value}</strong></div><div class="impact-track"><i class="impact-zero"></i><span class="impact-bar ${factor.impact < 0 ? 'negative' : 'positive'}" style="--impact-width:${width}%"></span></div></div>`;
+        }).join('')}<div class="impact-axis"><span>Downward pressure</span><span>Upward pressure</span></div></div>`;
+      }
+      function cropEconomicsTable() {
+        const activeMarketCount = activeMarkets().length;
+        const factorRows = [
+          ['Availability', (sample) => {
+            const listedMarkets = new Set(state.prices.filter((row) => row.crop === sample.crop && marketById(row.marketId)?.active).map((row) => row.marketId)).size;
+            return `<span class="economics-signal ${listedMarkets ? 'positive' : 'caution'}">${listedMarkets ? 'Available' : 'No active listings'}</span><small>${listedMarkets} of ${activeMarketCount} active markets</small>`;
+          }],
+          ['Total production cost', (sample) => `<strong>${peso(sample.productionCost)}</strong>`],
+          ['Total harvested quantity', (sample) => {
+            const listedQuantity = state.prices
+              .filter((row) => row.crop === sample.crop && marketById(row.marketId)?.active)
+              .reduce((total, row) => total + Number(row.volume.replace(/[^0-9.]/g, '')), 0);
+            return `<strong>${listedQuantity.toLocaleString('en-PH')} kg</strong>`;
+          }],
+          ['Current selling price', (sample) => `<strong>${peso(sample.currentPrice)}<span class="economics-unit">/ kg</span></strong>`],
+          ['Average selling-price range', (sample) => esc(sample.averageSellingPriceRange)],
+        ];
+        const rows = factorRows.map(([factor, formatValue]) => `<tr class="${factor === 'Average selling-price range' ? 'economics-range-row' : ''}"><th scope="row" class="economics-factor">${factor}</th>${cropEconomicsSamples.map((sample) => `<td>${formatValue(sample)}</td>`).join('')}</tr>`).join('');
+        return `<section class="panel market-panel economics-panel">
+          <div class="panel-header"><div><span class="section-kicker">Farmer's factors</span><h2>Price-trajectory factors</h2></div><span class="sample-badge">Illustrative sample</span></div>
+          <div class="table-wrap economics-table-wrap"><table class="economics-table">
+            <thead><tr><th scope="col">Factor</th>${cropEconomicsSamples.map((sample) => `<th scope="col">${esc(sample.crop)}</th>`).join('')}</tr></thead>
+            <tbody>${rows}</tbody>
+          </table></div>
+          <p class="economics-disclaimer">All values are illustrative local demonstration data, not verified farm records or a price forecast. Availability and total quantity reflect active local market listings; quantity is summed across the crop's listed market volumes.</p>
+        </section>`;
+      }
+      marketView = function () {
+        const rows = state.prices.filter((row) => marketById(row.marketId)?.active);
+        const visibleTransactions = state.showAllTransactions ? state.transactions : state.transactions.slice(0, 4);
+        const allCrops = crops.slice(1);
+        return `<section class="page-heading"><div><p class="eyebrow">Porac local market network</p><h1>Market Records</h1><p class="subheading">Review local market prices, availability, and recorded farmer transactions.</p></div><button class="export-button" data-action="export"><span>↓</span> Export market view</button></section>
+          <section class="panel market-panel"><div class="comparison-header"><div><span class="section-kicker">Overall comparison</span><h2>Crop availability by market</h2></div><span class="muted-label">Same crops, different local supply</span></div><div class="table-wrap crop-comparison-table"><table><thead><tr><th>Crop</th>${activeMarkets().map((market) => `<th>${esc(market.community)}</th>`).join('')}</tr></thead><tbody>${allCrops.map((crop) => `<tr><td><strong>${crop}</strong><small>Price per kilo</small></td>${activeMarkets().map((market) => { const row = state.prices.find((item) => item.marketId === market.id && item.crop === crop); return row ? `<td><strong>${peso(row.price)}</strong></td>` : '<td class="unavailable">Not offered</td>'; }).join('')}</tr>`).join('')}</tbody></table></div></section>
+          <section class="panel market-panel"><div class="panel-header"><div><span class="section-kicker">Current listings</span><h2>Crop prices by local market</h2></div><span class="muted-label">${rows.length} listings</span></div><div class="table-wrap"><table><thead><tr><th>Market</th><th>Crop</th><th>Community</th><th>Price / kg</th><th>Change</th><th>Volume</th><th>Status</th></tr></thead><tbody>${rows.map((row) => { const market = marketById(row.marketId); return `<tr><td><strong>${esc(market.name)}</strong></td><td>${row.crop}</td><td><span class="region-label"><i></i>${esc(market.community)}</span></td><td><strong>${peso(row.price)}</strong></td><td class="${row.change >= 0 ? 'green-text' : 'red-text'}">${row.change >= 0 ? '+' : ''}${row.change}%</td><td>${row.volume}</td><td><span class="status ${row.change < 0 ? 'watch' : 'stable'}"><i></i>${row.change < 0 ? 'Review' : 'Recorded'}</span></td></tr>`; }).join('')}</tbody></table>${!rows.length ? '<div class="empty-state">No active local listings.</div>' : ''}</div></section>
+          ${cropEconomicsTable()}
+          <section class="panel market-panel"><div class="panel-header"><div><span class="section-kicker">Past transactions</span><h2>Recent farmer records</h2></div><button class="link-button" data-action="toggle-transactions">${state.showAllTransactions ? 'Show fewer' : 'View all'} →</button></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Crop</th><th>Market</th><th>Quantity</th><th>Price / kg</th><th>Status</th></tr></thead><tbody>${visibleTransactions.map((item) => `<tr><td>${item.date}</td><td><strong>${item.crop}</strong></td><td>${esc(marketById(item.marketId)?.name || 'Removed market')}</td><td>${item.quantity}</td><td>${peso(item.price)}</td><td><span class="status stable"><i></i>${item.status}</span></td></tr>`).join('')}</tbody></table></div></section>`;
+      };
+      function marketTrendView() {
+        const slide = communitySlide();
+        const trendCrop = trendSlideCrop();
+        const trend = trendSeries(trendCrop);
+        const allCrops = crops.slice(1);
+        return `<section class="filter-bar"><div class="filter-title"><span class="filter-icon">≡</span> Filter local view</div><label>Crop<select id="crop-select">${crops.map((item) => `<option ${item === state.crop ? 'selected' : ''}>${item}</option>`).join('')}</select></label><label>Community<select id="district-select">${districts.map((item) => `<option ${item === state.district ? 'selected' : ''}>${item}</option>`).join('')}</select></label><label>Period<select id="period-select">${['Last 8 months', 'Last 12 months', 'This year'].map((item) => `<option ${item === state.period ? 'selected' : ''}>${item}</option>`).join('')}</select></label><button class="clear-button" data-action="clear">Clear</button></section><section class="dashboard-grid"><article class="panel trend-panel"><div class="panel-header"><div><span class="section-kicker">Price trend</span><h2>${esc(trendCrop)} movement</h2></div><span class="status-chip">Auto ${state.priceSlide % (crops.length - 1) + 1} / ${crops.length - 1}</span></div>${lineChartMarkup(trend.labels, trend.values)}<div class="auto-slide-label">Rotating crop trend</div></article><article class="panel slide-panel"><div class="panel-header"><div><span class="section-kicker">By community</span><h2>${slide.crop} price difference</h2></div><span class="comparison-slide-badge">Auto ${state.communitySlide % allCrops.length + 1} / ${allCrops.length}</span></div><div class="slide-main"><div><strong>${peso(slide.low)} - ${peso(slide.high)} / kg</strong><p>${slide.rows.filter((item) => item.row).length} of ${slide.rows.length} markets offer ${slide.crop}. Highest difference: ${peso(slide.high - slide.low)} / kg.</p></div></div><div class="comparison-list">${slide.rows.map((item) => `<div class="comparison-row ${item.row ? '' : 'unavailable-row'}"><div class="row-label"><strong>${esc(item.market.community)}</strong><span>${item.row ? peso(item.row.price) : 'Not offered'}</span></div><div class="bar-track"><div class="bar-fill ${item.row ? 'highlight' : ''}" style="width:${item.row ? Math.max(14, item.row.price / Math.max(slide.high, 1) * 100) : 0}%"></div></div><small>${item.row ? 'Available' : 'No listing'}</small></div>`).join('')}</div><div class="auto-slide-label">Rotating price difference</div></article></section>`;
+      }
+      function priceTrajectoryView() {
+        const slideshowCrops = crops.slice(1).filter((crop) => priceOutlookData(crop));
+        const activeCrop = outlookCrop === 'All crops' ? slideshowCrops[outlookSlideIndex % Math.max(slideshowCrops.length, 1)] : outlookCrop;
+        const forecast = activeCrop ? priceOutlookData(activeCrop) : null;
+        const select = `<div class="outlook-selectors"><label class="outlook-crop-select">Crop to review<select id="outlook-crop"><option value="All crops" ${outlookCrop === 'All crops' ? 'selected' : ''}>All crops · slideshow</option>${crops.slice(1).map((crop) => `<option value="${esc(crop)}" ${crop === outlookCrop ? 'selected' : ''}>${esc(crop)}</option>`).join('')}</select></label><label class="outlook-crop-select">Community<select id="outlook-district">${districts.map((district) => `<option value="${esc(district)}" ${district === outlookDistrict ? 'selected' : ''}>${esc(district)}</option>`).join('')}</select></label></div>`;
+        if (!forecast) {
+          return `<section class="page-heading"><div><p class="eyebrow">Local decision support</p><h1>Price Trajectory</h1><p class="subheading">A data-based estimate of the next price movement, recalculated from local records.</p></div>${select}</section><section class="panel outlook-panel"><div class="empty-state">There are no active market listings for ${esc(outlookCrop === 'All crops' ? outlookDistrict : outlookCrop)}. Add or activate a local listing to generate an outlook.</div></section>`;
+        }
+        const slideControls = outlookCrop === 'All crops' && slideshowCrops.length > 1
+          ? `<div class="outlook-slide-controls"><button type="button" data-outlook-slide="previous" aria-label="Previous crop">←</button><span>${outlookSlideIndex % slideshowCrops.length + 1} / ${slideshowCrops.length}</span><button type="button" data-outlook-slide="next" aria-label="Next crop">→</button><button type="button" data-outlook-slide="toggle" aria-label="${outlookSlidePaused ? 'Resume' : 'Pause'} slideshow">${outlookSlidePaused ? 'Play' : 'Pause'}</button></div>`
+          : '';
+        return `<section class="page-heading"><div><p class="eyebrow">Local decision support</p><h1>Price Trajectory</h1><p class="subheading">A data-based estimate of the next price movement, recalculated from local records.</p></div>${select}</section>
+          <section class="outlook-dashboard">
+            <div class="outlook-chart-grid">
+              <article class="panel outlook-chart-panel"><div class="panel-header"><div><span class="section-kicker">Price trajectory</span><h2>${esc(activeCrop)} price per kilogram</h2></div><div class="outlook-chart-actions"><span class="chart-legend"><i></i>History <i class="forecast-key"></i> Outlook</span>${slideControls}</div></div>${outlookPriceChart(forecast)}<p class="outlook-chart-note">Monthly sample prices through September; the dashed line connects the latest local average to the estimated next price.${outlookCrop === 'All crops' ? ' Select a crop in the filter to keep its chart on screen.' : ''}</p><div class="outlook-impact-total"><div class="outlook-impact-movement"><span>Estimated movement</span><strong class="${forecast.estimatedChange < 0 ? 'negative' : forecast.estimatedChange > 0 ? 'positive' : 'neutral'}">${forecast.estimatedChange > 0 ? '+' : ''}${forecast.estimatedChange.toFixed(1)}%</strong></div><div class="outlook-impact-price"><span>Estimated price</span><strong>${peso(forecast.projectedPrice)}<small> / kg</small></strong></div><div class="outlook-impact-meta"><span>Current average: <strong>${peso(forecast.averagePrice)} / kg</strong></span><span>Signal agreement: <strong>${forecast.signal}</strong></span></div></div></article>
+              <article class="panel outlook-chart-panel outlook-breakdown-panel"><div class="panel-header"><div><span class="section-kicker">Forecast breakdown</span><h2>What is influencing the estimate?</h2></div></div>${outlookImpactChart(forecast)}<p class="outlook-chart-note">Each bar shows its contribution in percentage points. Values to the right add upward pressure; values to the left add downward pressure.</p><section class="outlook-factors"><div class="panel-header"><div><span class="section-kicker">Signals used</span><h2>Local data factors</h2></div></div><div class="outlook-factor-grid"><article class="outlook-factor"><span>Stored price history</span><strong class="${forecast.historicalChange >= 0 ? 'green-text' : 'red-text'}">${forecast.historicalChange > 0 ? '+' : ''}${forecast.historicalChange.toFixed(1)}%</strong><small>Average monthly change over 8 sample months</small></article><article class="outlook-factor"><span>Current market changes</span><strong class="${forecast.recentChange >= 0 ? 'green-text' : 'red-text'}">${forecast.recentChange > 0 ? '+' : ''}${forecast.recentChange.toFixed(1)}%</strong><small>Average of ${forecast.rows.length} active local listing${forecast.rows.length === 1 ? '' : 's'}</small></article><article class="outlook-factor"><span>Market availability</span><strong>${forecast.rows.length} of ${forecast.marketCount} markets</strong><small>${forecast.availabilityAdjustment ? 'Fewer listings add a small upward pressure signal.' : 'Listings are present across active markets.'}</small></article><article class="outlook-factor"><span>Local weather outlook</span><strong>${forecast.rainyDays} of ${weatherForecast.length} days with rain</strong><small>Rain is treated as a possible supply disruption, not a confirmed price change.</small></article></div></section></article>
+            </div>
+            <p class="outlook-disclaimer">This is a transparent, rule-based estimate using locally stored sample data only—not a trained or validated forecasting model. It weights current market changes at 65% and the stored trend at 25%, then applies small availability and weather signals. Use it as decision support, not a guaranteed price.</p>
+          </section>`;
+      }
+      priceOutlookView = function () {
+        return `<section class="page-heading"><div><p class="eyebrow">Local decision support</p><h1>Market Outlook</h1><p class="subheading">Compare local price trends and review the estimated price trajectory.</p></div></section>${marketTrendView()}${priceTrajectoryView()}`;
+      };
+      if (new URLSearchParams(window.location.search).get('farmer') === '1') {
+        profileView = function farmerProfileView() {
+          return `<section class="page-heading"><div><p class="eyebrow">Farmer profile</p><h1>Profile</h1><p class="subheading">Your crops and local decision-support tools.</p></div><span class="status-chip">Farmer account</span></section><section class="panel profile-panel" data-farmer-profile="true"><div class="profile-overview"><div class="profile-avatar">MS</div><div class="profile-details"><strong>Maria Santos</strong><span>Talong and Patani grower</span><small>Guagua, Pampanga</small></div><span class="status-chip">Farmer account</span></div><div class="admin-summary"><span><strong>Talong</strong> main crop</span><span><strong>Patani</strong> secondary crop</span><span><strong>Guagua</strong> local market area</span></div><p class="profile-intro">Review nearby prices and local price outlooks based on stored market data.</p><div class="profile-tools"><article class="profile-tool"><span class="tool-icon">₱</span><div><strong>Check local prices</strong><small>Compare buying points and recent crop prices.</small></div><a class="link-button" href="#markets">Market Records →</a></article><article class="profile-tool"><span class="tool-icon">↗</span><div><strong>View price outlook</strong><small>See locally calculated price movement signals.</small></div><a class="link-button" href="#outlook">Market Outlook →</a></article></div></section>`;
+        };
+      }
+      if (new URLSearchParams(window.location.search).get('farmer') === '1') {
+        profileView = function farmerProfileView() {
+          return `<section class="page-heading"><div><p class="eyebrow">Farmer profile</p><h1>Profile</h1><p class="subheading">Your crops and local decision-support tools.</p></div><span class="status-chip">Farmer account</span></section><section class="panel profile-panel" data-farmer-profile="true"><div class="profile-overview"><div class="profile-avatar">MS</div><div class="profile-details"><strong>Maria Santos</strong><span>Talong and Patani grower</span><small>Guagua, Pampanga</small></div><span class="status-chip">Farmer account</span></div><div class="admin-summary"><span><strong>Talong</strong> main crop</span><span><strong>Patani</strong> secondary crop</span><span><strong>Guagua</strong> local market area</span></div><p class="profile-intro">Review nearby prices and local price outlooks based on stored market data.</p><div class="profile-tools"><article class="profile-tool"><span class="tool-icon">₱</span><div><strong>Check local prices</strong><small>Compare buying points and recent crop prices.</small></div><a class="link-button" href="#markets">Markets →</a></article><article class="profile-tool"><span class="tool-icon">↗</span><div><strong>View price outlook</strong><small>See locally calculated price movement signals.</small></div><a class="link-button" href="#outlook">Open price outlook →</a></article></div></section>`;
+        };
+      }
+      dashboardRoot.addEventListener('change', (event) => {
+        if (event.target.id === 'outlook-crop') {
+          outlookCrop = event.target.value;
+          outlookSlideIndex = 0;
+          outlookSlidePaused = outlookCrop !== 'All crops';
+        }
+        else if (event.target.id === 'outlook-district') outlookDistrict = event.target.value;
+        else return;
+        render();
+      });
+      dashboardRoot.addEventListener('click', (event) => {
+        const slideControl = event.target.closest('[data-outlook-slide]');
+        if (!slideControl) return;
+        const availableCrops = crops.slice(1).filter((crop) => priceOutlookData(crop));
+        if (slideControl.dataset.outlookSlide === 'toggle') {
+          outlookSlidePaused = !outlookSlidePaused;
+        } else if (availableCrops.length) {
+          const direction = slideControl.dataset.outlookSlide === 'next' ? 1 : -1;
+          outlookSlideIndex = (outlookSlideIndex + direction + availableCrops.length) % availableCrops.length;
+        }
+        render();
+      });
+      const longDate = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date());
+      const shortDate = new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(new Date());
+      const dashboardReplacements = new Map([
+        ['Porac Pricing DSS', 'IS78 Pricing DSS'],
+        ['Porac decision support', 'Pricing decision support'],
+        ['Markets & Trends', 'Market Records'],
+        ['Price Outlook', 'Market Outlook'],
+        ['Profile / Admin', 'Profile'],
+        ['Porac price pulse', 'Market price movement'],
+        ['Porac, Pampanga | 22 September 2026', `Porac, Pampanga | ${longDate}`],
+        ['Porac, Pampanga | Last updated 22 Sep 2026', `Porac, Pampanga | Last updated ${shortDate}`],
+        ['DSS / ', 'IS78 / '],
+      ]);
+
+      function updateDashboardLabels() {
+        const walker = document.createTreeWalker(dashboardRoot, NodeFilter.SHOW_TEXT);
+        let textNode;
+        while ((textNode = walker.nextNode())) {
+          for (const [original, updated] of dashboardReplacements) {
+            if (textNode.nodeValue.includes(original)) textNode.nodeValue = textNode.nodeValue.replaceAll(original, updated);
+          }
+        }
+
+        const pageSubheading = dashboardRoot.querySelector('.page-heading .subheading');
+        if (pageSubheading && new URLSearchParams(window.location.search).get('farmer') !== '1') {
+          const activeMarketIds = new Set(state.markets.filter((market) => market.active).map((market) => market.id));
+          const listedCropCount = new Set(state.prices.filter((price) => activeMarketIds.has(price.marketId)).map((price) => price.crop)).size;
+          if (state.tab === 'overview') {
+            pageSubheading.textContent = `You have ${activeMarketIds.size} active market${activeMarketIds.size === 1 ? '' : 's'} and ${listedCropCount} crop type${listedCropCount === 1 ? '' : 's'} with listed prices.`;
+          } else if (state.tab === 'markets') {
+            const rows = state.prices.filter((row) => activeMarketIds.has(row.marketId));
+            const marketCount = new Set(rows.map((row) => row.marketId)).size;
+            pageSubheading.textContent = `${rows.length} price listings across ${marketCount} active market${marketCount === 1 ? '' : 's'}, plus ${state.transactions.length} past transactions.`;
+          } else if (state.tab === 'outlook') {
+            pageSubheading.textContent = `Price movement is estimated from local records across ${listedCropCount} crop types.`;
+          } else if (state.tab === 'profile') {
+            pageSubheading.textContent = `${activeMarketIds.size} of ${state.markets.length} registered markets are active; ${listedCropCount} crop types are listed.`;
+          }
+        }
+
+        dashboardRoot.querySelector('.brand-mark')?.replaceChildren('I');
+        const breadcrumbTitle = dashboardRoot.querySelector('.breadcrumb strong');
+        if (breadcrumbTitle) breadcrumbTitle.textContent = 'IS78 crop pricing';
+        dashboardRoot.querySelectorAll('.nav-item').forEach((item) => {
+          const label = item.textContent.trim();
+          item.setAttribute('aria-label', label);
+          item.title = label;
+        });
+        document.title = document.title.replace('Porac Pricing DSS', 'IS78 Pricing DSS');
+      }
+
+      const renderDashboard = render;
+      render = function () {
+        renderDashboard();
+        updateDashboardLabels();
+        dashboardRoot.querySelectorAll('a[href="#outlook"]').forEach((link) => link.setAttribute('href', '#outlook'));
+      };
+      render();
+    </script>
+  </body>
+</html>
